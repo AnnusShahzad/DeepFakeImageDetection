@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Data & artifacts (never commit the 7.5 GB dataset or weights)
+data/
+outputs/
+*.pt
+*.pth
+*.safetensors
+*.npy
+*.npz
+embeddings_*.npy
+
+# Logs & caches
+*.log
+.cache/
+.hf/
+wandb/
+
+# OS
+.DS_Store
