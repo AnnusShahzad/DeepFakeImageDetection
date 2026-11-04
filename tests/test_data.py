@@ -164,3 +164,26 @@ def test_holdout_generator_unknown_name_rejected(tiny_dataset):
     with pytest.raises(ValueError):
         data_mod.build_dataset("train", data_dir=str(tiny_dataset), limit=None,
                                norm="imagenet", img_size=64, holdout_generator="banana")
+
+
+def test_stratified_limit_is_class_balanced(tiny_dataset):
+    ds = data_mod.build_dataset("train", data_dir=str(tiny_dataset), limit=12,
+                                norm="imagenet", img_size=64)
+    labels = ds.labels_b()
+    counts = {name: int((labels == i).sum()) for i, name in enumerate(LABEL_B_NAMES)}
+    assert counts == {name: 2 for name in LABEL_B_NAMES}
+
+
+def test_stratified_limit_covers_all_classes_with_odd_limit(tiny_dataset):
+    ds = data_mod.build_dataset("train", data_dir=str(tiny_dataset), limit=7,
+                                norm="imagenet", img_size=64)
+    labels = set(ds.labels_b().tolist())
+    assert labels == set(range(6))   # every class survives a tiny smoke limit
+
+
+def test_stratified_limit_indices_deterministic():
+    labels = [0] * 50 + [1] * 50 + [2] * 50
+    a = data_mod.stratified_limit_indices(labels, 30, seed=0)
+    b = data_mod.stratified_limit_indices(labels, 30, seed=0)
+    assert list(a) == list(b)
+    assert sum(np.asarray(labels)[a] == 0) == 10

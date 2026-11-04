@@ -181,7 +181,9 @@ class LocalFolderDataset(Dataset):
         if holdout_id is not None:
             self.samples = [s for s in self.samples if s[1] != holdout_id]
         if limit:
-            self.samples = self.samples[: int(limit)]
+            labels = [s[1] for s in self.samples]
+            idx = stratified_limit_indices(labels, limit, seed=SEED)
+            self.samples = [self.samples[i] for i in idx]
 
     def __len__(self) -> int:
         return len(self.samples)
@@ -218,7 +220,9 @@ class HfImageDataset(Dataset):
             self.hf = self.hf.filter(lambda row: int(row["Label_B"]) != holdout_id,
                                       desc=f"holdout {holdout_generator}")
         if limit:
-            self.hf = self.hf.select(range(min(int(limit), len(self.hf))))
+            labels = self.hf["Label_B"]
+            idx = stratified_limit_indices(labels, limit, seed=SEED)
+            self.hf = self.hf.select([int(i) for i in idx])
         self.transform = transform
 
     def __len__(self) -> int:
@@ -309,6 +313,30 @@ def build_loader(ds: Dataset, *, batch_size: int, shuffle: bool, num_workers: in
     return DataLoader(**kwargs)
 
 
+def stratified_limit_indices(labels, limit: int, seed: int = SEED) -> np.ndarray:
+    """Deterministic class-balanced subsample indices for `--limit`.
+
+    A naive `samples[:limit]` would take the first N files in class order
+    (i.e. all real + sd21 + sdxl + a prefix of sd3) and silently exclude
+    dalle3/mj6 — making any smoke/debug subset useless. This picks an equal
+    number per class (remainder distributed to the first classes), seeded.
+    """
+    labels_arr = np.asarray(labels)
+    if limit is None or int(limit) >= len(labels_arr):
+        return np.arange(len(labels_arr))
+    limit = int(limit)
+    classes = np.unique(labels_arr)
+    per = limit // len(classes)
+    extra = limit - per * len(classes)
+    rng = np.random.default_rng(seed)
+    parts: list[np.ndarray] = []
+    for i, cls in enumerate(classes):
+        members = np.flatnonzero(labels_arr == cls)
+        take = min(len(members), per + (1 if i < extra else 0))
+        parts.append(rng.choice(members, size=take, replace=False))
+    return np.sort(np.concatenate(parts))
+
+
 def _find_parquet_shards(root: Path, split: str) -> list[Path]:
     for candidate in (root / "data", root):
         if candidate.is_dir():
@@ -357,7 +385,9 @@ class ParquetImageDataset(Dataset):
                     continue
                 self.samples.append((shard_idx, row, int(lb)))
         if limit:
-            self.samples = self.samples[: int(limit)]
+            labels = [s[2] for s in self.samples]
+            idx = stratified_limit_indices(labels, limit, seed=SEED)
+            self.samples = [self.samples[i] for i in idx]
 
     # ------------------------------------------------------------- internals
     def _load_shard(self, shard_idx: int):
