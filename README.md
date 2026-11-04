@@ -40,6 +40,7 @@ protocol** (7,500 real + 7,500 fake, seeded) with raw-skew metrics beside — se
 ```bash
 python3 -m venv ~/venvs/mscocoai && source ~/venvs/mscocoai/bin/activate
 pip install -r requirements.txt
+pip install -e .   # makes `python -m mscocoai.*` work from any directory (optional)
 
 python -m mscocoai.doctor                     # preflight: GPU/RAM/disk/internet — fails loudly if blocked
 python scripts/print_labels.py                # label-map sanity, no download
@@ -75,7 +76,7 @@ or `TEAM_GUIDE.md` for the hand-over one-pager.
 | `scripts/run_paper_models.sh` | paper runs unchanged |
 | `scripts/run_ablation.sh` | the ablation grid (`--scaled` quick, default full) |
 | `scripts/collect_results.py` | aggregate `results.json` from many runs |
-| `tests/` | 102 tests incl. crash-resume and parquet round-trip; run with `pytest` |
+| `tests/` | 105 tests incl. crash-resume, CLI→config round-trip, parquet round-trip; run with `pytest` |
 
 ## Paper ↔ code map
 
@@ -123,7 +124,7 @@ then without `--scaled` in the background), aggregate with
 ## Verification
 
 ```bash
-python -m pytest                     # 102 tests, CPU, no network
+python -m pytest                     # 105 tests, CPU, no network
 bash scripts/run_paper_models.sh     # paper reproduction
 python -m mscocoai.doctor            # preflight
 ```

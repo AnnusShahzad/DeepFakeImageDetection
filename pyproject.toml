@@ -1,3 +1,23 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mscocoai"
+version = "1.0.0"
+description = "AI-generated image detection and generator attribution for MS-COCOAI"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT-0" }
+authors = [{ name = "Annus Shahzad" }]
+# Dependencies are intentionally not duplicated here — install with
+# `pip install -r requirements.txt` (or the CUDA torch build) as the guides explain.
+# `pip install -e .` installs the package itself in editable mode.
+dependencies = []
+
+[tool.setuptools.packages.find]
+include = ["mscocoai*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"

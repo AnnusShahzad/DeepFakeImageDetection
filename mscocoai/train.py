@@ -113,6 +113,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--label-smoothing", type=float, default=0.0)
     p.add_argument("--ema-decay", type=float, default=0.0, help="e.g. 0.999; 0 disables EMA")
     p.add_argument("--save-steps", type=int, default=0, help="extra checkpoint every N optimizer steps (0 = only per epoch)")
+    p.add_argument("--lambda-d", type=float, default=1.0, help="weight of the detection loss (multi-task)")
+    p.add_argument("--lambda-a", type=float, default=1.0, help="weight of the attribution loss (multi-task)")
+    p.add_argument("--val-metrics-each-epoch", action="store_true",
+                   help="compute val ACC/F1/AUC every epoch (slower)")
     p.add_argument("--max-hours", type=float, default=0.0,
                    help="wall-clock budget; stop cleanly (checkpoint + upload + summary) before the limit. "
                         "0 disables it; use --max-hours 11 on Kaggle")
