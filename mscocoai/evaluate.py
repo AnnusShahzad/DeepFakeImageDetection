@@ -17,7 +17,7 @@ from mscocoai.constants import LABEL_B_NAMES
 from mscocoai.data import build_dataset, build_loader
 from mscocoai.tta import average_binary, average_multiclass, tta_views
 from mscocoai.metrics import attribution_report, binary_report, per_generator_detection
-from mscocoai.models import load_model_for_eval
+from mscocoai.models import checkpoint_resize_mode, load_model_for_eval, resize_mode_from_config
 from mscocoai import report as rep
 
 
@@ -33,6 +33,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--num-workers", type=int, default=4)
     p.add_argument("--degradation", default="none", choices=["none", "jpeg75", "blur"],
                    help="test-time degradation (robustness evaluation)")
+    p.add_argument("--resize-mode", default="auto", choices=["auto", "squash", "canonical"],
+                   help="auto: inherit from the checkpoint's training config")
     p.add_argument("--tta", default="none", choices=["none", "flip", "flip_scale"],
                    help="test-time augmentation (average over views)")
     p.add_argument("--layout", default="auto", choices=["auto", "folder", "parquet"])
@@ -83,9 +85,13 @@ def main() -> None:
     report_dir.mkdir(parents=True, exist_ok=True)
 
     degradation = args.degradation
+    resize_mode = args.resize_mode
+    if resize_mode == "auto":
+        resize_mode = resize_mode_from_config(ckpt.get("config"))
     ds = build_dataset(args.split, data_dir=args.data_dir, limit=args.limit,
                        norm=args.norm, img_size=args.img_size, degradation=degradation,
-                       layout=args.layout, holdout_generator=args.holdout_generator)
+                       layout=args.layout, holdout_generator=args.holdout_generator,
+                       resize_mode=resize_mode)
     loader = build_loader(ds, batch_size=args.batch_size, shuffle=False,
                           num_workers=args.num_workers, seed=0)
     scores, preds, ya, yb = run_inference(model, loader, device, task, tta=args.tta, img_size=args.img_size)
@@ -96,6 +102,7 @@ def main() -> None:
         "split": args.split,
         "degradation": degradation,
         "tta": args.tta,
+        "resize_mode": resize_mode,
         "holdout_generator": args.holdout_generator,
         "n": int(len(ya)),
     }

@@ -12,6 +12,7 @@ cd "$REPO_ROOT"
 
 SCALED=0
 KEEP_GOING=0
+ONLY=""
 DATA_DIR="${DATA_DIR:-data_mirror}"
 PY="${MSCOCOAI_PYTHON:-python3}"
 
@@ -19,6 +20,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --scaled) SCALED=1; shift ;;
     --keep-going) KEEP_GOING=1; shift ;;
+    --only) ONLY="$2"; shift 2 ;;
     *) echo "unknown argument: $1"; exit 2 ;;
   esac
 done
@@ -42,6 +44,11 @@ fi
 
 run_row() {
   local name="$1"; shift
+  if [[ -n "$ONLY" && ",$ONLY," != *",$name,"* ]]; then
+    echo
+    echo "=== ROW $name === skipped (--only $ONLY)"
+    return 0
+  fi
   echo
   echo "=== ROW $name ==="
   echo "$PY -m mscocoai.train --out-dir outputs/$name --data-dir $DATA_DIR --num-workers 8 ${LIMIT_ARGS[*]} $*"

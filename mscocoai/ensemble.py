@@ -14,7 +14,7 @@ import torch
 from mscocoai.constants import LABEL_B_NAMES
 from mscocoai.data import build_dataset, build_loader
 from mscocoai.metrics import attribution_report, balanced_binary_report, binary_report, per_generator_detection
-from mscocoai.models import load_model_for_eval
+from mscocoai.models import checkpoint_resize_mode, load_model_for_eval
 from mscocoai.tta import average_binary, average_multiclass, tta_views
 from mscocoai import report as rep
 
@@ -62,6 +62,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--batch-size", type=int, default=64)
     p.add_argument("--num-workers", type=int, default=4)
     p.add_argument("--degradation", default="none", choices=["none", "jpeg75", "blur"])
+    p.add_argument("--resize-mode", default="auto", choices=["auto", "squash", "canonical"],
+                   help="auto: inherit from the checkpoints (all must agree)")
     p.add_argument("--tta", default="none", choices=["none", "flip", "flip_scale"])
     p.add_argument("--holdout-generator", default=None,
                        choices=["sd21", "sdxl", "sd3", "dalle3", "mj6"])
@@ -82,9 +84,18 @@ def main() -> None:
         w = np.ones(n, dtype=np.float64)
     w = w / w.sum()
 
+    modes = {checkpoint_resize_mode(p) for p in args.checkpoints}
+    if len(modes) > 1:
+        raise SystemExit(f"checkpoints disagree on resize_mode ({sorted(modes)}); "
+                         "ensemble them under one protocol or pass --resize-mode explicitly")
+    resize_mode = args.resize_mode
+    if resize_mode == "auto":
+        resize_mode = modes.pop() if modes else "squash"
+
     ds = build_dataset(args.split, data_dir=args.data_dir, limit=args.limit,
                        norm=args.norm, img_size=args.img_size, degradation=args.degradation,
-                       layout=args.layout, holdout_generator=args.holdout_generator)
+                       layout=args.layout, holdout_generator=args.holdout_generator,
+                       resize_mode=resize_mode)
     loader = build_loader(ds, batch_size=args.batch_size, shuffle=False,
                           num_workers=args.num_workers, seed=0)
 

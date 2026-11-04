@@ -148,10 +148,12 @@ def evaluate_split(model, loader, device, task: str, world_size: int = 1) -> dic
         preds = np.concatenate(all_pred)
         out.update(attribution_report(yb, preds))
     else:
-        det = np.concatenate([p[0] for p in all_pred])
-        att = np.concatenate([p[1] for p in all_pred])
-        out["detection"] = binary_report(ya, det)
-        out["attribution"] = attribution_report(yb, att)
+        # detection head: use the *probabilities* (all_score), not the 0/1
+        # predictions — AUC/PR-AUC/FPR@95TPR are meaningless on hard labels.
+        det_scores = np.concatenate(all_score).reshape(-1)
+        att_preds = np.concatenate([p[1] for p in all_pred])
+        out["detection"] = binary_report(ya, det_scores)
+        out["attribution"] = attribution_report(yb, att_preds)
     return out
 
 
@@ -311,12 +313,15 @@ def fit(cfg) -> dict:
     # ---------------- data
     holdout_gen = getattr(cfg, "holdout_generator", None)
     data_layout = getattr(cfg, "data_layout", "auto")
+    resize_mode = getattr(cfg, "resize_mode", "squash")
     train_ds = build_dataset("train", data_dir=cfg.data_dir, limit=cfg.limit,
                              norm=cfg.norm, img_size=cfg.img_size,
-                             layout=data_layout, holdout_generator=holdout_gen)
+                             layout=data_layout, holdout_generator=holdout_gen,
+                             resize_mode=resize_mode)
     val_ds = build_dataset("validation", data_dir=cfg.data_dir, limit=cfg.limit,
                            norm=cfg.norm, img_size=cfg.img_size,
-                           layout=data_layout, holdout_generator=holdout_gen)
+                           layout=data_layout, holdout_generator=holdout_gen,
+                           resize_mode=resize_mode)
     num_workers = cfg.num_workers
     train_sampler = build_sampler(train_ds, shuffle=True, seed=cfg.seed, drop_last=True) \
         if world_size > 1 else None

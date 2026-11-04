@@ -68,6 +68,7 @@ class TrainConfig:
     holdout_generator: str | None = None  # sd21 | sdxl | sd3 | dalle3 | mj6
     channels_last: bool = False
     resume_epoch_only: bool = False
+    resize_mode: str = "squash"  # squash (standard) | canonical (shortcut-free)
 
     def as_dict(self):
         return asdict(self)
@@ -89,6 +90,10 @@ def build_parser() -> argparse.ArgumentParser:
                         "evaluate on it (unseen-generator setting)")
     p.add_argument("--limit", type=int, default=None, help="limit samples per split (debug/smoke tests)")
     p.add_argument("--img-size", type=int, default=224)
+    p.add_argument("--resize-mode", default="squash", choices=["squash", "canonical"],
+                   help="squash: standard resize (native resolution is a usable shortcut); "
+                        "canonical: identical two-step resize for every image, which removes "
+                        "the resolution shortcut")
     p.add_argument("--norm", default="imagenet", choices=["imagenet", "clip"])
     p.add_argument("--batch-size", type=int, default=32)
     p.add_argument("--eval-batch-size", type=int, default=64)

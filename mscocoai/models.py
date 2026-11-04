@@ -262,6 +262,21 @@ def load_checkpoint(path: str | os.PathLike, map_location: str | torch.device = 
     return ckpt
 
 
+def resize_mode_from_config(config: dict | None) -> str:
+    """The resize protocol recorded in a training config ('squash' | 'canonical')."""
+    return str((config or {}).get("resize_mode") or "squash")
+
+
+def checkpoint_resize_mode(path: str | os.PathLike) -> str:
+    """The resize protocol a checkpoint was trained with ('squash' | 'canonical').
+
+    Evaluation must use the same protocol; reading it from the checkpoint
+    prevents a silent train/eval mismatch.
+    """
+    ckpt = load_checkpoint(path)
+    return resize_mode_from_config(ckpt.get("config"))
+
+
 def find_latest_valid_checkpoint(out_dir: str | os.PathLike) -> Path | None:
     """Return the newest loadable checkpoint in out_dir, or None.
 

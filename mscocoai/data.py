@@ -123,15 +123,56 @@ DEGRADATIONS: dict[str, Callable[[Image.Image], Image.Image]] = {
 }
 
 
+class CanonicalResize:
+    """Shortcut-free resize: identical pixel pipeline for every image.
+
+    MS-COCOAI ships each generator at a fixed native resolution
+    (real 640x480, sd21 768^2, sdxl/sd3 1024^2, dalle3 270^2, mj6 436^2),
+    which lets a classifier separate the classes from image dimensions alone.
+    This transform removes that information: the whole frame is squashed to
+    ``canonical``x``canonical`` and then to the model input size, so every
+    image goes through exactly the same two resampling operations regardless
+    of its native size.
+    """
+
+    def __init__(self, canonical: int = 128, out_size: int = 224):
+        self.canonical = int(canonical)
+        self.out_size = int(out_size)
+
+    def __call__(self, img: Image.Image) -> Image.Image:
+        img = img.convert("RGB")
+        img = img.resize((self.canonical, self.canonical), Image.BICUBIC)
+        return img.resize((self.out_size, self.out_size), Image.BICUBIC)
+
+
 def get_transforms(kind: str, norm: str = "imagenet", img_size: int = IMG_SIZE,
-                   degradation: str = "none") -> Callable:
-    """kind: train | val | test (val == test, deterministic)."""
+                   degradation: str = "none", resize_mode: str = "squash") -> Callable:
+    """kind: train | val | test (val == test, deterministic).
+
+    resize_mode: squash (default, standard protocol) | canonical (shortcut-free).
+    """
     mean, std = _norm_pair(norm)
     degrade = DEGRADATIONS[degradation]
     to_tensor = transforms.Compose([
         transforms.ToTensor(),
         transforms.Normalize(mean, std),
     ])
+    if resize_mode not in ("squash", "canonical"):
+        raise ValueError(f"unknown resize_mode: {resize_mode}")
+    if resize_mode == "canonical":
+        canonical = CanonicalResize(128, img_size)
+        if kind == "train":
+            return transforms.Compose([
+                canonical,
+                transforms.RandomHorizontalFlip(p=0.5),
+                transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.02),
+                to_tensor,
+            ])
+        return transforms.Compose([
+            transforms.Lambda(degrade),
+            canonical,
+            to_tensor,
+        ])
     if kind == "train":
         ops: list[Callable] = [
             transforms.RandomResizedCrop(img_size, scale=(0.8, 1.0), ratio=(0.9, 1.1),
@@ -253,10 +294,12 @@ class HfImageDataset(Dataset):
 
 def build_dataset(split: str, *, data_dir: str | None, limit: int | None,
                   norm: str, img_size: int, degradation: str = "none",
-                  layout: str = "auto", holdout_generator: str | None = None) -> Dataset:
+                  layout: str = "auto", holdout_generator: str | None = None,
+                  resize_mode: str = "squash") -> Dataset:
     split = canonical_split(split)
     kind = "train" if split == "train" else "test"
-    tf = get_transforms(kind, norm=norm, img_size=img_size, degradation=degradation)
+    tf = get_transforms(kind, norm=norm, img_size=img_size, degradation=degradation,
+                        resize_mode=resize_mode)
     if data_dir:
         root = Path(data_dir)
         resolved = layout

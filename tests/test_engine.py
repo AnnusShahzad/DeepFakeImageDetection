@@ -105,3 +105,37 @@ def test_max_hours_stops_cleanly(tiny_dataset, tmp_path):
     result = fit(cfg)
     assert result["stop_reason"] == "time_budget"
     assert (out / "last.pt").is_file()
+
+
+def test_multitask_detection_metrics_use_scores_not_hard_labels():
+    """Regression: AUC/PR-AUC must be computed from detection *probabilities*.
+
+    Feeding the 0/1 predictions into binary_report made AUC collapse onto
+    balanced_accuracy (AUC of a thresholded score vector).
+    """
+    import torch
+
+    from mscocoai.engine import evaluate_split
+
+    class StubModel(torch.nn.Module):
+        def forward(self, x):
+            n = x.shape[0]
+            det = torch.tensor([2.1972, 1.3863, -0.2007, -0.6190])[:n]
+            attr = torch.zeros(n, 6)
+            attr[:, 0] = 1.0
+            return det, attr
+
+    class StubLoader:
+        def __iter__(self):
+            yield {
+                "image": torch.zeros(4, 3, 8, 8),
+                "label_a": torch.tensor([1, 0, 1, 0]),
+                "label_b": torch.tensor([0, 1, 0, 1]),
+            }
+
+    out = evaluate_split(StubModel(), StubLoader(), "cpu", "multitask")
+    det = out["detection"]
+    # probabilities [.900, .800, .450, .350] -> AUC 0.75
+    # thresholded labels [1, 1, 0, 0]           -> AUC 0.50 (the old, wrong value)
+    assert det["auc"] == pytest.approx(0.75, abs=1e-9)
+    assert det["balanced_accuracy"] == pytest.approx(0.5, abs=1e-9)

@@ -187,3 +187,38 @@ def test_stratified_limit_indices_deterministic():
     b = data_mod.stratified_limit_indices(labels, 30, seed=0)
     assert list(a) == list(b)
     assert sum(np.asarray(labels)[a] == 0) == 10
+
+
+def test_canonical_resize_removes_native_size_signal():
+    """Same content at two native resolutions must map to the same pixels.
+
+    MS-COCOAI gives every generator a fixed native resolution, so the standard
+    'squash' pipeline leaks that information through the resampling grid.
+    The canonical pipeline must produce (near) identical tensors regardless
+    of the source size.
+    """
+    from mscocoai.data import get_transforms
+
+    base = Image.fromarray(np.random.default_rng(0).integers(0, 255, (224, 224, 3), dtype=np.uint8))
+    big = base.resize((512, 512), Image.NEAREST)
+
+    tf_canon = get_transforms("val", img_size=224, resize_mode="canonical")
+    tf_squash = get_transforms("val", img_size=224, resize_mode="squash")
+
+    a_canon = np.asarray(tf_canon(base))
+    b_canon = np.asarray(tf_canon(big))
+    a_squash = np.asarray(tf_squash(base))
+    b_squash = np.asarray(tf_squash(big))
+
+    assert a_canon.shape == b_canon.shape == (3, 224, 224)
+    # identical content, different native size -> (near) identical pixels
+    assert np.abs(a_canon - b_canon).max() <= 4
+    # the whole frame is used: a 640x480 source still yields 224x224
+    wide = Image.fromarray(np.zeros((480, 640, 3), dtype=np.uint8))
+    assert np.asarray(tf_canon(wide)).shape == (3, 224, 224)
+
+
+def test_get_transforms_rejects_unknown_resize_mode():
+    from mscocoai.data import get_transforms
+    with pytest.raises(ValueError):
+        get_transforms("val", resize_mode="bogus")

@@ -71,3 +71,32 @@ def test_evaluate_with_tta_and_holdout(tiny_dataset, tmp_path, monkeypatch):
     assert report["holdout_generator"] == "sd3"
     # sd3 (4 images in the tiny test mirror) must be excluded
     assert report["binary"]["support"] == (4 * 6) - 4
+
+
+def test_evaluate_inherits_resize_mode_from_checkpoint(tiny_dataset, tmp_path, monkeypatch):
+    """A canonical-trained checkpoint must be evaluated with the canonical pipeline."""
+    from mscocoai.train import TrainConfig
+    from mscocoai.engine import fit
+    from tests.test_engine import _cfg
+
+    cfg = _cfg(tiny_dataset, tmp_path / "canon", epochs=1, resume="none")
+    cfg.resize_mode = "canonical"
+    fit(cfg)
+    ckpt = tmp_path / "canon" / "best.pt"
+
+    seen = {}
+    real_build = evaluate.build_dataset
+
+    def spy(*args, **kwargs):
+        seen.update(kwargs)
+        return real_build(*args, **kwargs)
+
+    monkeypatch.setattr(evaluate, "build_dataset", spy)
+    monkeypatch.setattr(sys, "argv", [
+        "evaluate", "--checkpoint", str(ckpt), "--split", "test",
+        "--data-dir", str(tiny_dataset), "--img-size", "64",
+        "--batch-size", "8", "--num-workers", "0", "--no-samples",
+        "--report-dir", str(tmp_path / "rep"),
+    ])
+    evaluate.main()
+    assert seen["resize_mode"] == "canonical"
