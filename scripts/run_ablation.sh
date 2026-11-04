@@ -55,27 +55,27 @@ run_row() {
 }
 
 # Row 1-2: paper protocol reproduction (no balance flags, as in the paper)
-run_row paper_resnet50_binary  --task binary     --backbone resnet50 --batch-size 32 --accum-steps 2
-run_row paper_resnet50_attr    --task attribution --backbone resnet50 --batch-size 32 --accum-steps 2 --attr-class-weights
+run_row paper_resnet50_binary  --task binary     --backbone resnet50 --batch-size 32 --accum-steps 2 --val-metrics-each-epoch
+run_row paper_resnet50_attr    --task attribution --backbone resnet50 --batch-size 32 --accum-steps 2 --attr-class-weights --val-metrics-each-epoch
 
 # Row 3: strong multi-task baseline (ConvNeXt-Tiny)
-run_row mt_convnext_tiny       --task multitask  --backbone convnext_tiny --batch-size 32 --accum-steps 2
+run_row mt_convnext_tiny       --task multitask  --backbone convnext_tiny --batch-size 32 --accum-steps 2 --val-metrics-each-epoch
 
 # Row 4: frequency-aware dual-branch (the paper's headline component)
-run_row mt_freq                --task multitask  --backbone convnext_tiny --freq-branch dct --freq-k 32 --batch-size 32 --accum-steps 2
+run_row mt_freq                --task multitask  --backbone convnext_tiny --freq-branch dct --freq-k 32 --batch-size 32 --accum-steps 2 --val-metrics-each-epoch
 
 # Row 5: training-schedule ablation (EMA + label smoothing)
 run_row mt_freq_ema_ls         --task multitask  --backbone convnext_tiny --freq-branch dct --freq-k 32 \
-                                --ema-decay 0.999 --label-smoothing 0.05 --batch-size 32 --accum-steps 2
+                                --ema-decay 0.999 --label-smoothing 0.05 --batch-size 32 --accum-steps 2 --val-metrics-each-epoch
 
 # Row 6: inference-time ablation (TTA + calibrated threshold)
 run_row mt_freq_ema_ls_tta     --task multitask  --backbone convnext_tiny --freq-branch dct --freq-k 32 \
                                 --ema-decay 0.999 --label-smoothing 0.05 --tta flip_scale --calibrate macro_f1 \
-                                --batch-size 32 --accum-steps 2
+                                --batch-size 32 --accum-steps 2 --val-metrics-each-epoch
 
 # Row 7: foundation-model branch (ViT-L/14 CLIP)
 run_row mt_clip                --task multitask  --clip-init clip_vitl14 --freq-branch dct --freq-k 32 \
-                                --ema-decay 0.999 --label-smoothing 0.05 --batch-size 16 --accum-steps 4
+                                --ema-decay 0.999 --label-smoothing 0.05 --batch-size 16 --accum-steps 4 --val-metrics-each-epoch
 
 echo
 echo "=== ablation grid complete (or stopped); aggregate with:"

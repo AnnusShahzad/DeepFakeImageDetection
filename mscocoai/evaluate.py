@@ -15,6 +15,7 @@ import torch
 
 from mscocoai.constants import LABEL_B_NAMES
 from mscocoai.data import build_dataset, build_loader
+from mscocoai.tta import average_binary, average_multiclass, tta_views
 from mscocoai.metrics import attribution_report, binary_report, per_generator_detection
 from mscocoai.models import load_model_for_eval
 from mscocoai import report as rep
@@ -32,29 +33,42 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--num-workers", type=int, default=4)
     p.add_argument("--degradation", default="none", choices=["none", "jpeg75", "blur"],
                    help="test-time degradation (robustness evaluation)")
+    p.add_argument("--tta", default="none", choices=["none", "flip", "flip_scale"],
+                   help="test-time augmentation (average over views)")
+    p.add_argument("--layout", default="auto", choices=["auto", "folder", "parquet"])
+    p.add_argument("--holdout-generator", default=None,
+                   choices=["sd21", "sdxl", "sd3", "dalle3", "mj6"])
     p.add_argument("--report-dir", default=None)
     p.add_argument("--no-samples", action="store_true", help="skip misclassified sample grid")
     return p
 
 
 @torch.no_grad()
-def run_inference(model, loader, device, task):
+def run_inference(model, loader, device, task, tta: str = "none", img_size: int = 224):
     model.eval()
     scores, preds, ya, yb = [], [], [], []
     for batch in loader:
         imgs = batch["image"].to(device, non_blocking=True)
-        out = model(imgs)
+        views = tta_views(imgs, tta, img_size) if tta != "none" else [imgs]
+        det_views, att_views = [], []
+        for view in views:
+            out = model(view)
+            if task == "binary":
+                det_views.append(torch.sigmoid(out).squeeze(-1).float())
+            elif task == "attribution":
+                att_views.append(torch.softmax(out.float(), dim=1))
+            else:  # multitask
+                z_d, z_a = out
+                det_views.append(torch.sigmoid(z_d).float())
+                att_views.append(torch.softmax(z_a.float(), dim=1))
         if task == "binary":
-            scores.append(torch.sigmoid(out).squeeze(-1).float().cpu().numpy())
+            scores.append(average_binary(det_views).cpu().numpy())
             preds.append(None)
         elif task == "attribution":
-            prob = torch.softmax(out.float(), dim=1)
-            scores.append(prob[:, 1:].argmax(dim=1))  # placeholder, not used for attribution
-            preds.append(prob.argmax(dim=1).cpu().numpy())
+            preds.append(average_multiclass(att_views).argmax(dim=1).cpu().numpy())
         else:  # multitask
-            z_d, z_a = out
-            scores.append(torch.sigmoid(z_d).float().cpu().numpy())
-            preds.append(torch.softmax(z_a.float(), dim=1).argmax(dim=1).cpu().numpy())
+            scores.append(average_binary(det_views).cpu().numpy())
+            preds.append(average_multiclass(att_views).argmax(dim=1).cpu().numpy())
         ya.append(batch["label_a"].numpy())
         yb.append(batch["label_b"].numpy())
     return scores, preds, np.concatenate(ya), np.concatenate(yb)
@@ -70,16 +84,19 @@ def main() -> None:
 
     degradation = args.degradation
     ds = build_dataset(args.split, data_dir=args.data_dir, limit=args.limit,
-                       norm=args.norm, img_size=args.img_size, degradation=degradation)
+                       norm=args.norm, img_size=args.img_size, degradation=degradation,
+                       layout=args.layout, holdout_generator=args.holdout_generator)
     loader = build_loader(ds, batch_size=args.batch_size, shuffle=False,
                           num_workers=args.num_workers, seed=0)
-    scores, preds, ya, yb = run_inference(model, loader, device, task)
+    scores, preds, ya, yb = run_inference(model, loader, device, task, tta=args.tta, img_size=args.img_size)
 
     result: dict = {
         "checkpoint": str(args.checkpoint),
         "task": task,
         "split": args.split,
         "degradation": degradation,
+        "tta": args.tta,
+        "holdout_generator": args.holdout_generator,
         "n": int(len(ya)),
     }
     det_scores = None

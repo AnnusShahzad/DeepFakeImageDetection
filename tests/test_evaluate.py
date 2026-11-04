@@ -53,3 +53,21 @@ def test_report_artifacts(tiny_dataset, tmp_path):
                                tmp_path / "mis.csv")
     for name in ("cm.png", "cm_norm.png", "pg.csv", "grid.png", "mis.csv"):
         assert (tmp_path / name).is_file() and (tmp_path / name).stat().st_size > 0
+
+
+def test_evaluate_with_tta_and_holdout(tiny_dataset, tmp_path, monkeypatch):
+    ckpt = _train_tiny_binary(tiny_dataset, tmp_path)
+    report_dir = tmp_path / "report_tta"
+    monkeypatch.setattr(sys, "argv", [
+        "evaluate", "--checkpoint", str(ckpt), "--split", "test",
+        "--data-dir", str(tiny_dataset), "--img-size", "64",
+        "--batch-size", "8", "--num-workers", "0",
+        "--tta", "flip", "--holdout-generator", "sd3",
+        "--report-dir", str(report_dir), "--no-samples",
+    ])
+    evaluate.main()
+    report = json.loads((report_dir / "report.json").read_text())
+    assert report["tta"] == "flip"
+    assert report["holdout_generator"] == "sd3"
+    # sd3 (4 images in the tiny test mirror) must be excluded
+    assert report["binary"]["support"] == (4 * 6) - 4

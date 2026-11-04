@@ -26,7 +26,7 @@ from mscocoai.models import (
 )
 from mscocoai import drive_upload
 from mscocoai.distributed import (
-    all_gather_object, all_reduce_sum, barrier, broadcast_bool, broadcast_float64,
+    all_reduce_sum, barrier, broadcast_bool, broadcast_float64,
     build_sampler, cleanup_distributed, init_distributed, is_main_process,
 )
 from mscocoai.results import ResultsLog
@@ -38,22 +38,6 @@ def seed_everything(seed: int = SEED) -> None:
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.benchmark = True
-
-
-def resolve_device(spec: str = "auto") -> str:
-    """auto | cpu | cuda | cuda:N | tpu."""
-    spec = (spec or "auto").lower()
-    if spec == "auto":
-        return "cuda" if torch.cuda.is_available() else "cpu"
-    if spec == "cpu":
-        return "cpu"
-    if spec == "tpu":
-        return "tpu"
-    if spec == "cuda" or spec.startswith("cuda:"):
-        if not torch.cuda.is_available():
-            raise SystemExit(f"--device {spec} requested but CUDA is not available")
-        return spec
-    raise ValueError(f"unknown --device: {spec}")
 
 
 def check_free_disk(path: str | os.PathLike, min_free_gb: float) -> tuple[bool, float]:
@@ -124,14 +108,6 @@ def _predict(model, loader, device, amp_device: str, task: str):
     return (all_score, all_pred, np.concatenate(all_a), np.concatenate(all_b))
 
 
-def _gather(preds_or_scores, label_a, label_b):
-    """Gather per-rank arrays so metrics are computed on the full split once."""
-    ya_parts = all_gather_object(label_a)
-    yb_parts = all_gather_object(label_b)
-    sc_parts = all_gather_object(preds_or_scores)
-    return sc_parts, np.concatenate(ya_parts), np.concatenate(yb_parts)
-
-
 @torch.no_grad()
 def _val_loss(model, loader, device, criterion_d, criterion_a, cfg, world_size: int = 1) -> float:
     model.eval()
@@ -160,11 +136,10 @@ def _val_loss(model, loader, device, criterion_d, criterion_a, cfg, world_size: 
 
 
 def evaluate_split(model, loader, device, task: str, world_size: int = 1) -> dict:
+    """Metrics for the split. Under DDP every rank evaluates the full split
+    (identical weights), so ranks agree bitwise; rank 0 is the only writer."""
     amp_device = "cpu" if str(device) == "cpu" else ("cuda" if str(device).startswith("cuda") else "xla")
     all_score, all_pred, ya, yb = _predict(model, loader, device, amp_device, task)
-    if world_size > 1:
-        all_score, ya, yb = _gather(all_score, ya, yb)
-        all_pred, _, _ = _gather(all_pred, ya, yb)
     out: dict[str, Any] = {}
     if task == "binary":
         scores = np.concatenate(all_score)
@@ -268,8 +243,35 @@ def _resave_with_threshold(checkpoint: Path, threshold: float) -> None:
 
 def fit(cfg) -> dict:
     seed_everything(cfg.seed)
-    rank, world_size, local_rank = init_distributed()
-    is_main = is_main_process()
+
+    # ---- decide device + backend from --device and the environment (before group init)
+    requested = (getattr(cfg, "device", "auto") or "auto").lower()
+    env_ws = int(os.environ.get("WORLD_SIZE", "1"))
+    n_gpu = torch.cuda.device_count() if torch.cuda.is_available() else 0
+    allow_gpu_share = os.environ.get("NCCL_MULTI_RANK_GPU_ENABLE", "").lower() in ("1", "true", "yes")
+
+    if requested == "cpu":
+        device, backend = "cpu", "gloo"
+    elif requested == "tpu":
+        device, backend = "tpu", "gloo"
+    elif requested.startswith("cuda"):
+        if env_ws > 1 and n_gpu and env_ws > n_gpu and not allow_gpu_share:
+            print(f"[ddp] {env_ws} ranks but only {n_gpu} GPU(s); falling back to CPU+gloo. "
+                  f"Set NCCL_MULTI_RANK_GPU_ENABLE=1 to share a GPU (or use fewer ranks).")
+            device, backend = "cpu", "gloo"
+        else:
+            device, backend = requested, "nccl"
+    elif requested == "auto":
+        if n_gpu > 0 and env_ws <= n_gpu:
+            device, backend = "cuda", "nccl"
+        else:
+            # piling more ranks than GPUs onto one GPU crashes nccl; fall back instead
+            device, backend = "cpu", "gloo"
+    else:
+        raise ValueError(f"unknown --device: {requested}")
+
+    rank, world_size, local_rank = init_distributed(backend=backend)
+    is_main = rank == 0
 
     out_dir = Path(cfg.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -282,14 +284,6 @@ def fit(cfg) -> dict:
             f"need ≥ {getattr(cfg, 'min_free_gb', 5.0)} GB). "
             "Free space or lower --min-free-gb.")
 
-    requested = getattr(cfg, "device", "auto")
-    if world_size > 1:
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        if torch.cuda.is_available():
-            torch.cuda.set_device(local_rank)
-    else:
-        device = resolve_device(requested)
-
     tpu_mode = device == "tpu"
     if tpu_mode:
         from mscocoai import xla
@@ -300,7 +294,7 @@ def fit(cfg) -> dict:
         amp_device = "xla"
         autocast_ctx = xla.xla_amp_context()
     elif device == "cuda" or device.startswith("cuda:"):
-        torch_device = device if ":" in device else "cuda"
+        torch_device = device if world_size == 1 else f"cuda:{local_rank}"
         amp_device = "cuda"
         autocast_ctx = torch.autocast("cuda", dtype=torch.float16, enabled=True)
     else:

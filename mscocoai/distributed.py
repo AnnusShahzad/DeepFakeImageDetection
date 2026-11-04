@@ -51,7 +51,7 @@ def init_distributed(backend: str | None = None) -> tuple[int, int, int]:
         backend = "nccl" if torch.cuda.is_available() else "gloo"
     if world_size > 1 and not is_distributed():
         dist.init_process_group(backend=backend, rank=rank, world_size=world_size)
-    if torch.cuda.is_available():
+    if backend == "nccl" and torch.cuda.is_available():
         torch.cuda.set_device(local_rank)
     return rank, world_size, local_rank
 
@@ -76,26 +76,36 @@ def build_sampler(dataset, *, shuffle: bool, seed: int = 0, drop_last: bool = Fa
     return None
 
 
+def _collective_tensor(value, dtype=torch.float64) -> torch.Tensor:
+    """Tensor on the right device for the active backend (nccl needs CUDA)."""
+    t = torch.tensor([value], dtype=dtype)
+    if is_distributed() and dist.get_backend() == "nccl" and torch.cuda.is_available():
+        t = t.cuda()
+    return t
+
+
 def all_gather_np(arr: np.ndarray) -> np.ndarray:
     """All-gather a 1-D/N-D numpy array from every rank, concatenated on axis 0."""
     arr = np.ascontiguousarray(arr)
     if not is_distributed():
         return arr
     t = torch.from_numpy(arr).cpu()
+    if dist.get_backend() == "nccl":
+        t = t.cuda()
     gathered = [torch.zeros_like(t) for _ in range(get_world_size())]
     dist.all_gather(gathered, t)
-    return np.concatenate([g.numpy() for g in gathered], axis=0)
+    return np.concatenate([g.cpu().numpy() for g in gathered], axis=0)
 
 
 def all_reduce_sum(value: float) -> float:
-    t = torch.tensor([float(value)])
+    t = _collective_tensor(float(value), torch.float64)
     if is_distributed():
         dist.all_reduce(t, op=dist.ReduceOp.SUM)
     return float(t.item())
 
 
 def all_reduce_max_int(value: int) -> int:
-    t = torch.tensor([int(value)], dtype=torch.int64)
+    t = _collective_tensor(int(value), torch.int64)
     if is_distributed():
         dist.all_reduce(t, op=dist.ReduceOp.MAX)
     return int(t.item())
