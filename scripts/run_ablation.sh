@@ -49,6 +49,11 @@ run_row() {
     echo "=== ROW $name === skipped (--only $ONLY)"
     return 0
   fi
+  if [[ -f "outputs/$name/results.json" && "${FORCE:-0}" != "1" ]]; then
+    echo
+    echo "=== ROW $name === already complete — not retraining (FORCE=1 to override)"
+    return 0
+  fi
   echo
   echo "=== ROW $name ==="
   echo "$PY -m mscocoai.train --out-dir outputs/$name --data-dir $DATA_DIR --num-workers 8 ${LIMIT_ARGS[*]} $*"
